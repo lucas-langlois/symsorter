@@ -13,6 +13,7 @@ import numpy as np
 import traceback
 import argparse
 import yaml
+import shutil
 from pathlib import Path
 from .clip_encode import load_existing_embeddings
 import subprocess
@@ -598,6 +599,13 @@ class ImageBrowser(QMainWindow):
         export_action.triggered.connect(self.export_yolo_annotations)
         file_menu.addAction(export_action)
         
+        # Export images to folders action
+        export_folders_action = QAction('Export Images to &Folders...', self)
+        export_folders_action.setShortcut(QKeySequence('Ctrl+Shift+E'))
+        export_folders_action.setStatusTip('Export classified images to separate folders by class name')
+        export_folders_action.triggered.connect(self.export_images_to_folders)
+        file_menu.addAction(export_folders_action)
+        
         # View menu
         view_menu = menubar.addMenu('&View')
         
@@ -696,6 +704,7 @@ class ImageBrowser(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(save_action)
         toolbar.addAction(export_action)
+        toolbar.addAction(export_folders_action)
         toolbar.addSeparator()
         toolbar.addAction(reset_action)
         toolbar.addAction(show_classified_action)
@@ -1884,6 +1893,146 @@ class ImageBrowser(QMainWindow):
         
         print(f"Exported {exported_count} YOLO annotations to {export_path}")
         print(f"Classes file saved to {classes_file}")
+    
+    def export_images_to_folders(self):
+        """Export classified images to separate folders by class name"""
+        if not self.image_categories or not self.classes:
+            QMessageBox.warning(
+                self,
+                "No Classifications",
+                "No images have been classified yet, or no classes are loaded.\n\n"
+                "Please classify some images first before exporting."
+            )
+            return
+        
+        # Ask user to select export directory
+        export_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Export Directory for Classified Images",
+            "",
+            QFileDialog.ShowDirsOnly
+        )
+        
+        if not export_dir:
+            return
+        
+        export_path = Path(export_dir)
+        
+        # Ask user if they want to copy or move
+        reply = QMessageBox.question(
+            self,
+            "Copy or Move?",
+            "Do you want to COPY images to class folders (keeping originals) "
+            "or MOVE them (deleting originals)?\n\n"
+            "Click 'Yes' to COPY, 'No' to MOVE, 'Cancel' to abort.",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes
+        )
+        
+        if reply == QMessageBox.Cancel:
+            return
+        
+        copy_mode = (reply == QMessageBox.Yes)
+        operation = "Copying" if copy_mode else "Moving"
+        
+        try:
+            # Create progress dialog
+            progress = QMessageBox(self)
+            progress.setWindowTitle("Exporting Images")
+            progress.setText(f"{operation} classified images to folders...")
+            progress.setStandardButtons(QMessageBox.NoButton)
+            progress.setModal(True)
+            progress.show()
+            QApplication.processEvents()
+            
+            # Count images per class
+            class_counts = {}
+            for category_info in self.image_categories.values():
+                class_name = category_info['class_name']
+                class_counts[class_name] = class_counts.get(class_name, 0) + 1
+            
+            # Create folders for each class that has images
+            for class_name in class_counts.keys():
+                class_dir = export_path / class_name
+                class_dir.mkdir(exist_ok=True)
+            
+            # Copy/move each classified image to its class folder
+            exported_count = 0
+            errors = []
+            
+            for filename, category_info in self.image_categories.items():
+                try:
+                    class_name = category_info['class_name']
+                    class_dir = export_path / class_name
+                    
+                    # Get source file path
+                    source_path = Path(filename)
+                    if not source_path.is_absolute():
+                        # If relative path, try to resolve it from the folder
+                        source_path = Path(self.folder) / filename
+                    
+                    # Check if source exists
+                    if not source_path.exists():
+                        errors.append(f"Source not found: {filename}")
+                        continue
+                    
+                    # Destination path
+                    dest_path = class_dir / source_path.name
+                    
+                    # Handle duplicate filenames
+                    if dest_path.exists():
+                        base_name = source_path.stem
+                        suffix = source_path.suffix
+                        counter = 1
+                        while dest_path.exists():
+                            dest_path = class_dir / f"{base_name}_{counter}{suffix}"
+                            counter += 1
+                    
+                    # Copy or move the file
+                    if copy_mode:
+                        shutil.copy2(source_path, dest_path)
+                    else:
+                        shutil.move(str(source_path), str(dest_path))
+                    
+                    exported_count += 1
+                    
+                    # Update progress every 10 images
+                    if exported_count % 10 == 0:
+                        progress.setText(
+                            f"{operation} classified images to folders...\n"
+                            f"Processed: {exported_count}/{len(self.image_categories)}"
+                        )
+                        QApplication.processEvents()
+                    
+                except Exception as e:
+                    errors.append(f"{filename}: {str(e)}")
+            
+            progress.close()
+            
+            # Show results
+            message = f"Successfully {operation.lower()}d {exported_count} images to class folders:\n\n"
+            for class_name, count in class_counts.items():
+                message += f"  • {class_name}: {count} images\n"
+            
+            if errors:
+                message += f"\n⚠ Encountered {len(errors)} errors:\n"
+                message += "\n".join(errors[:5])  # Show first 5 errors
+                if len(errors) > 5:
+                    message += f"\n... and {len(errors) - 5} more"
+                
+                QMessageBox.warning(self, "Export Completed with Errors", message)
+            else:
+                QMessageBox.information(self, "Export Successful", message)
+            
+            print(f"\nExport completed: {exported_count} images to {export_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"An error occurred during export:\n{str(e)}"
+            )
+            print(f"Error during export: {e}")
 
     # Placeholder methods for missing functionality
     def apply_filter_to_existing_model(self, visible_files_set):

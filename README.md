@@ -9,7 +9,7 @@ SymSorter is a powerful image classification tool that leverages OpenAI's CLIP (
 
 ## 🌟 Features
 
-- **AI-Powered Image Encoding**: Uses CLIP, DINOv3, and other state-of-the-art vision models
+- **AI-Powered Image Encoding**: Uses CLIP, DINOv2, and other state-of-the-art vision models
 - **GUI Embedding Generation**: Create embeddings directly from the GUI with real-time progress monitoring
 - **Interactive GUI**: Fast, responsive interface for browsing and classifying thousands of images
 - **Smart Similarity Sorting**: Double-click any image to sort by visual similarity
@@ -17,7 +17,7 @@ SymSorter is a powerful image classification tool that leverages OpenAI's CLIP (
 - **YAML Configuration**: Flexible class definitions with descriptions and custom hotkeys
 - **Batch Processing**: Efficient handling of large image collections
 - **Caching System**: Smart caching for fast loading and smooth scrolling
-- **YOLO Export**: Export classifications in YOLO annotation format
+- **Multiple Export Options**: Export as YOLO annotations or organize images into class folders
 - **Thumbnail Scaling**: Multiple thumbnail sizes and crop options
 - **Progress Tracking**: Save and resume classification work
 
@@ -208,6 +208,7 @@ symsorter-gui --embeddings my_images.npz --classes classes.yaml
 - **Ctrl + O**: Load embeddings
 - **Ctrl + S**: Save classifications
 - **Ctrl + E**: Export YOLO annotations
+- **Ctrl + Shift + E**: Export images to folders by class
 - **R**: Reset image order
 
 **Filtering:**
@@ -237,11 +238,40 @@ symsorter-gui --embeddings my_images.npz --classes classes.yaml
 
 Export your classifications for use in other tools:
 
+#### Export YOLO Annotations
 ```bash
 # Export YOLO format annotations
 # Use File → Export YOLO Annotations in GUI
 # Creates labels/ directory with .txt files for each image
 ```
+
+#### Export Images to Folders by Class
+
+Organize your classified images into separate folders for easy access:
+
+1. **Press Ctrl+Shift+E** or use **File → Export Images to Folders...**
+2. **Select export directory** where class folders will be created
+3. **Choose operation**:
+   - **Copy**: Keeps original images in place, creates copies in class folders
+   - **Move**: Moves images to class folders (originals are deleted)
+4. Images are automatically organized:
+   ```
+   export_directory/
+   ├── turtle/
+   │   ├── image001.jpg
+   │   └── image023.jpg
+   ├── ray/
+   │   ├── image005.jpg
+   │   └── image012.jpg
+   └── dugong/
+       └── image030.jpg
+   ```
+
+**Benefits:**
+- Easily share classified images with colleagues
+- Prepare datasets for training or analysis
+- Archive organized collections
+- Duplicate filenames are automatically handled
 
 ## ⚙️ Configuration
 
