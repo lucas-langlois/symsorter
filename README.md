@@ -189,6 +189,17 @@ Launch the GUI with your embeddings and classes:
 symsorter-gui --embeddings my_images.npz --classes classes.yaml
 ```
 
+#### Temporal-Aware Sorting for Drone Surveys
+
+For DJI drone surveys with 80% forward overlap, SymSorter can combine embedding similarity with temporal proximity to better group consecutive images of the same animal:
+
+- **Enabled by default** for DJI images (with timestamps like `DJI_20250918073347_...`)
+- **Toggle with Ctrl+T** or via View → Temporal-Aware Sorting menu
+- **How it works**: When you double-click an image, it sorts by:
+  - **70% embedding similarity** (visual content)
+  - **30% temporal proximity** (capture time)
+- **Result**: Images of the same animal from successive frames appear together
+
 #### GUI Controls
 
 **Navigation:**
@@ -201,7 +212,10 @@ symsorter-gui --embeddings my_images.npz --classes classes.yaml
 - **Number Keys** or **Custom Keys**: Assign selected images to classes
 - **Shift + F1-F12**: Default shortcuts for first 12 classes
 - **Enter**: Assign to last used class
-- **Double-click image**: Sort by similarity
+- **Double-click image**: Sort by similarity (temporal-aware for DJI images)
+
+**Sorting:**
+- **Ctrl + T**: Toggle temporal-aware sorting (for DJI drone images with 80% overlap)
 
 **File Operations:**
 - **Ctrl + G**: Generate embeddings from images
@@ -254,7 +268,11 @@ Organize your classified images into separate folders for easy access:
 3. **Choose operation**:
    - **Copy**: Keeps original images in place, creates copies in class folders
    - **Move**: Moves images to class folders (originals are deleted)
-4. Images are automatically organized:
+4. **Optional CSV Filtering**: If `patch_based_predictions.csv` is found in the source folder, you'll be asked if you want to:
+   - Filter the CSV to only include classified detections
+   - Update image paths to point to the new exported locations
+   - Save as `filtered_predictions.csv` in the export directory
+5. Images are automatically organized:
    ```
    export_directory/
    ├── turtle/
@@ -263,8 +281,9 @@ Organize your classified images into separate folders for easy access:
    ├── ray/
    │   ├── image005.jpg
    │   └── image012.jpg
-   └── dugong/
-       └── image030.jpg
+   ├── dugong/
+   │   └── image030.jpg
+   └── filtered_predictions.csv  (if CSV filtering was enabled)
    ```
 
 **Benefits:**
@@ -272,6 +291,8 @@ Organize your classified images into separate folders for easy access:
 - Prepare datasets for training or analysis
 - Archive organized collections
 - Duplicate filenames are automatically handled
+- Automatically filter and update detection CSV files
+- Keep your data organized and ready for downstream processing
 
 ## ⚙️ Configuration
 

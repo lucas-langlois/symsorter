@@ -14,6 +14,8 @@ import traceback
 import argparse
 import yaml
 import shutil
+import re
+import pandas as pd
 from pathlib import Path
 from .clip_encode import load_existing_embeddings
 import subprocess
@@ -461,6 +463,27 @@ class ImageBrowser(QMainWindow):
         self.view.setResizeMode(QListView.Adjust)
         self.view.setUniformItemSizes(True)
         self.view.setSpacing(2)
+        
+        # Style the view to make selection very obvious
+        self.view.setStyleSheet("""
+            QListView {
+                outline: none;
+                background-color: #2b2b2b;
+            }
+            QListView::item:selected {
+                background-color: #0078d4;
+                border: 5px solid #00ff00;
+            }
+            QListView::item:selected:hover {
+                background-color: #106ebe;
+                border: 5px solid #66ff66;
+            }
+            QListView::item:hover {
+                background-color: rgba(255, 255, 255, 0.15);
+                border: 3px solid #90caf9;
+            }
+        """)
+        
         layout.addWidget(self.view)
 
         # Model
@@ -492,6 +515,10 @@ class ImageBrowser(QMainWindow):
         self.image_categories = {}  # Store category assignments for each image
         self.class_file_path = class_file
         self.last_used_class_idx = None  # Track last used class for Enter key
+        
+        # Sorting options
+        self.use_temporal_sorting = True  # Use temporal-aware sorting for DJI images
+        self.temporal_weight = 0.3  # Weight for temporal proximity (0-1, higher = more temporal influence)
         
         # Icon and crop settings
         self.icon_sizes = {"Small": 80, "Medium": 120, "Large": 320, "Extra Large": 640}
@@ -622,6 +649,17 @@ class ImageBrowser(QMainWindow):
         show_classified_action.setStatusTip('Show all classified images')
         show_classified_action.triggered.connect(self.show_classified_images)
         view_menu.addAction(show_classified_action)
+        
+        view_menu.addSeparator()
+        
+        # Temporal sorting toggle
+        self.temporal_sorting_action = QAction('&Temporal-Aware Sorting (DJI)', self)
+        self.temporal_sorting_action.setCheckable(True)
+        self.temporal_sorting_action.setChecked(self.use_temporal_sorting)
+        self.temporal_sorting_action.setShortcut(QKeySequence('Ctrl+T'))
+        self.temporal_sorting_action.setStatusTip('Combine similarity with temporal proximity for DJI drone images (80% overlap)')
+        self.temporal_sorting_action.triggered.connect(self.toggle_temporal_sorting)
+        view_menu.addAction(self.temporal_sorting_action)
         
         view_menu.addSeparator()
         
@@ -1666,8 +1704,46 @@ class ImageBrowser(QMainWindow):
         """Calculate cosine similarity between two embeddings"""
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
     
+    def extract_dji_timestamp(self, filename):
+        """
+        Extract timestamp from DJI filename.
+        Format: DJI_YYYYMMDDHHMMSS_XXXX_V_...
+        Returns: datetime object or None if not a DJI image
+        """
+        from datetime import datetime
+        basename = os.path.basename(filename)
+        
+        # Match DJI timestamp pattern
+        match = re.match(r'DJI_(\d{14})_', basename)
+        if match:
+            timestamp_str = match.group(1)
+            try:
+                return datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+            except:
+                return None
+        return None
+    
+    def calculate_temporal_distance(self, time1, time2):
+        """
+        Calculate normalized temporal distance between two timestamps.
+        Returns a value between 0 (same time) and 1 (very far apart).
+        """
+        if time1 is None or time2 is None:
+            return 1.0  # Maximum distance if timestamps unavailable
+        
+        # Calculate time difference in seconds
+        time_diff = abs((time1 - time2).total_seconds())
+        
+        # Normalize: images within 60 seconds are very close (0.0),
+        # images >10 minutes apart are very far (1.0)
+        # This helps group images from the same flight pass
+        max_distance = 600  # 10 minutes in seconds
+        normalized = min(time_diff / max_distance, 1.0)
+        
+        return normalized
+    
     def on_double_click(self, index):
-        """Handle double-click on an image to sort by similarity"""
+        """Handle double-click on an image to sort by similarity (with optional temporal awareness)"""
         if not self.embeddings:
             return
             
@@ -1675,21 +1751,47 @@ class ImageBrowser(QMainWindow):
         filename = index.data(Qt.UserRole)
         if filename not in self.embeddings:
             return
-            
-        print(f"Sorting by similarity to: {filename}")
         
-        # Get the embedding of the clicked image
+        # Get the embedding and timestamp of the clicked image
         reference_embedding = self.embeddings[filename]
+        reference_timestamp = self.extract_dji_timestamp(filename)
+        
+        # Determine sorting mode
+        if self.use_temporal_sorting and reference_timestamp is not None:
+            print(f"Sorting by similarity + temporal proximity to: {os.path.basename(filename)}")
+        else:
+            print(f"Sorting by similarity to: {os.path.basename(filename)}")
         
         # Calculate similarities to all images
         similarities = []
         for img_file in self.image_files:
             if img_file in self.embeddings:
-                sim = self.cosine_similarity(reference_embedding, self.embeddings[img_file])
-                similarities.append((img_file, sim))
+                # Calculate embedding similarity
+                embedding_sim = self.cosine_similarity(reference_embedding, self.embeddings[img_file])
+                
+                # Apply temporal weighting if enabled
+                if self.use_temporal_sorting and reference_timestamp is not None:
+                    img_timestamp = self.extract_dji_timestamp(img_file)
+                    temporal_dist = self.calculate_temporal_distance(reference_timestamp, img_timestamp)
+                    
+                    # Combine: higher similarity and lower temporal distance = better score
+                    # Convert temporal distance to temporal similarity (1 - distance)
+                    temporal_sim = 1.0 - temporal_dist
+                    
+                    # Weighted combination
+                    combined_score = (1 - self.temporal_weight) * embedding_sim + self.temporal_weight * temporal_sim
+                    similarities.append((img_file, combined_score, embedding_sim, temporal_sim))
+                else:
+                    similarities.append((img_file, embedding_sim, embedding_sim, 1.0))
         
-        # Sort by similarity (descending - most similar first)
+        # Sort by combined score (descending - highest score first)
         similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Print some debug info for top matches
+        if self.use_temporal_sorting and reference_timestamp is not None:
+            print(f"  Top matches (combined score | embedding sim | temporal sim):")
+            for i, (img_file, combined, emb_sim, temp_sim) in enumerate(similarities[:5], 1):
+                print(f"    {i}. {os.path.basename(img_file)}: {combined:.3f} | {emb_sim:.3f} | {temp_sim:.3f}")
         
         # Reorder the image files list
         self.image_files = [item[0] for item in similarities]
@@ -1743,6 +1845,19 @@ class ImageBrowser(QMainWindow):
         
         # Load any visible images that aren't already loaded
         self.load_visible_images()
+    
+    def toggle_temporal_sorting(self):
+        """Toggle temporal-aware sorting on/off"""
+        self.use_temporal_sorting = self.temporal_sorting_action.isChecked()
+        status = "enabled" if self.use_temporal_sorting else "disabled"
+        print(f"Temporal-aware sorting {status}")
+        QMessageBox.information(
+            self,
+            "Temporal Sorting",
+            f"Temporal-aware sorting has been {status}.\n\n"
+            f"{'This will combine embedding similarity with temporal proximity from DJI timestamps. ' if self.use_temporal_sorting else 'Only embedding similarity will be used. '}"
+            f"Double-click an image to sort."
+        )
     
     def reset_order(self):
         """Reset images to original order"""
@@ -1894,6 +2009,24 @@ class ImageBrowser(QMainWindow):
         print(f"Exported {exported_count} YOLO annotations to {export_path}")
         print(f"Classes file saved to {classes_file}")
     
+    def extract_detection_id_from_filename(self, filename):
+        """
+        Extract detection ID from the symsorter filename.
+        e.g., 'DJI_20250918082751_0001_V_turtle_DJI_20250918082751_0001_V_3_conf0.220.jpg' -> 'DJI_20250918082751_0001_V_3'
+        """
+        filename_str = str(filename).replace('detections_to_filter/', '').replace('detections_to_filter\\', '')
+        filename_str = os.path.basename(filename_str)
+        
+        # Pattern to match the classification format:
+        # DJI_timestamp_frame_V_class_DJI_timestamp_frame_V_detection_conf*.jpg
+        # We want just the final part: DJI_timestamp_frame_V_detection
+        match = re.search(r'(DJI_\d+_\d+_V)_[^_]+_(DJI_\d+_\d+_V_\d+)_conf[\d.]+\.jpg$', filename_str)
+        if match:
+            # Return the detection ID: DJI_timestamp_frame_V_detection
+            return match.group(2)
+        
+        return None
+    
     def export_images_to_folders(self):
         """Export classified images to separate folders by class name"""
         if not self.image_categories or not self.classes:
@@ -1959,6 +2092,8 @@ class ImageBrowser(QMainWindow):
             # Copy/move each classified image to its class folder
             exported_count = 0
             errors = []
+            filename_mapping = {}  # Track original filename -> new path for CSV updating
+            detection_id_to_new_path = {}  # Track detection_id -> new path for CSV filtering
             
             for filename, category_info in self.image_categories.items():
                 try:
@@ -1994,6 +2129,14 @@ class ImageBrowser(QMainWindow):
                     else:
                         shutil.move(str(source_path), str(dest_path))
                     
+                    # Track the mapping for CSV updates
+                    filename_mapping[filename] = dest_path
+                    
+                    # Extract detection ID and track new path
+                    detection_id = self.extract_detection_id_from_filename(filename)
+                    if detection_id:
+                        detection_id_to_new_path[detection_id] = dest_path
+                    
                     exported_count += 1
                     
                     # Update progress every 10 images
@@ -2007,12 +2150,84 @@ class ImageBrowser(QMainWindow):
                 except Exception as e:
                     errors.append(f"{filename}: {str(e)}")
             
+            # Close the main progress dialog
             progress.close()
+            progress.deleteLater()
+            QApplication.processEvents()
+            
+            # Check if patch_based_predictions.csv exists and offer to filter it
+            csv_filtered = False
+            if self.folder:
+                csv_path = Path(self.folder) / "patch_based_predictions.csv"
+                if csv_path.exists() and detection_id_to_new_path:
+                    # Ask user if they want to filter the CSV
+                    csv_reply = QMessageBox.question(
+                        self,
+                        "Filter CSV?",
+                        f"Found patch_based_predictions.csv in the source folder.\n\n"
+                        f"Do you want to create a filtered CSV with only the classified detections "
+                        f"and updated image paths pointing to the exported folders?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes
+                    )
+                    
+                    if csv_reply == QMessageBox.Yes:
+                        csv_progress = QMessageBox(self)
+                        csv_progress.setWindowTitle("Filtering CSV")
+                        csv_progress.setText("Filtering and updating patch_based_predictions.csv...")
+                        csv_progress.setStandardButtons(QMessageBox.NoButton)
+                        csv_progress.setModal(True)
+                        csv_progress.show()
+                        QApplication.processEvents()
+                        
+                        try:
+                            # Load the CSV
+                            df = pd.read_csv(csv_path)
+                            original_count = len(df)
+                            
+                            # Filter to only classified detection IDs
+                            filtered_df = df[df['detection_id'].isin(detection_id_to_new_path.keys())].copy()
+                            
+                            # Update image paths to point to new exported locations
+                            def update_path(row):
+                                detection_id = row['detection_id']
+                                if detection_id in detection_id_to_new_path:
+                                    return str(detection_id_to_new_path[detection_id])
+                                return row.get('image_path', '')
+                            
+                            # Update the image_path column if it exists, otherwise add it
+                            if 'image_path' in filtered_df.columns:
+                                filtered_df['image_path'] = filtered_df.apply(update_path, axis=1)
+                            else:
+                                filtered_df['image_path'] = filtered_df['detection_id'].map(
+                                    lambda x: str(detection_id_to_new_path.get(x, ''))
+                                )
+                            
+                            # Save filtered CSV
+                            output_csv = export_path / "filtered_predictions.csv"
+                            filtered_df.to_csv(output_csv, index=False)
+                            
+                            csv_filtered = True
+                            print(f"\nFiltered CSV: {original_count} -> {len(filtered_df)} rows")
+                            print(f"Saved to: {output_csv}")
+                            
+                        except Exception as csv_error:
+                            print(f"Error filtering CSV: {csv_error}")
+                            errors.append(f"CSV filtering error: {str(csv_error)}")
+                        
+                        finally:
+                            csv_progress.close()
+                            csv_progress.deleteLater()
+                            QApplication.processEvents()
             
             # Show results
             message = f"Successfully {operation.lower()}d {exported_count} images to class folders:\n\n"
             for class_name, count in class_counts.items():
                 message += f"  • {class_name}: {count} images\n"
+            
+            if csv_filtered:
+                message += f"\n✓ Filtered CSV created: filtered_predictions.csv\n"
+                message += f"  Updated image paths to point to exported locations"
             
             if errors:
                 message += f"\n⚠ Encountered {len(errors)} errors:\n"
