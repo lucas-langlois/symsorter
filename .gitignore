@@ -34,6 +34,7 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+installer/
 
 # Unit test / coverage
 .pytest_cache/
@@ -69,6 +70,7 @@ Thumbs.db
 *.npz
 *.doit-db
 /detections_to_filter/
+/sorted_detections/
 /labels/
 /test_*.py
 filtered_predictions_*.csv

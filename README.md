@@ -25,6 +25,17 @@ SymSorter is a powerful image classification tool that leverages OpenAI's CLIP (
 
 ### Installation
 
+#### Option 1: Windows Executable (No Python Required) 🪟
+
+**For Windows users who want a simple installation:**
+
+1. Download `SymSorter.exe` from the [Releases](https://github.com/lucas-langlois/symsorter/releases) page
+2. Double-click to run - that's it!
+
+*Note: First launch may take 30-60 seconds. The .exe is large (1-2 GB) due to included AI models.*
+
+#### Option 2: Python Installation (All Platforms)
+
 ```bash
 # Clone repository
 git clone https://github.com/lucas-langlois/symsorter.git
@@ -39,6 +50,10 @@ source .venv/bin/activate  # Linux/Mac
 # Install package
 pip install -e .
 ```
+
+#### Option 3: Build Your Own Windows Executable
+
+See [BUILD_EXE.md](BUILD_EXE.md) for instructions on creating your own .exe file.
 
 ### Basic Usage
 
