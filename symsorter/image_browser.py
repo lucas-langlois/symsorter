@@ -461,7 +461,7 @@ class ImageBrowser(QMainWindow):
         self.view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.view.setViewMode(QListView.IconMode)
         self.view.setResizeMode(QListView.Adjust)
-        self.view.setUniformItemSizes(True)
+        self.view.setUniformItemSizes(False)  # Disable to prevent Qt from auto-sizing based on first item
         self.view.setSpacing(2)
         
         # Style the view to make selection very obvious
@@ -527,6 +527,12 @@ class ImageBrowser(QMainWindow):
         self.crop_sizes = {"64": 64, "128": 128, "none": None}
         self.current_crop_name = "none"
         self.crop_size = self.crop_sizes[self.current_crop_name]  # Current crop size (None = no crop)
+
+        # Set fixed icon size on view for consistent item sizing
+        from PySide6.QtCore import QSize
+        padding = 5  # Same padding as used in on_thumbnail_size_changed
+        self.view.setIconSize(QSize(self.icon_size, self.icon_size))
+        self.view.setGridSize(QSize(self.icon_size + padding, self.icon_size + padding))
 
         # Create a simple placeholder icon (will be updated with zoom)
         self.update_placeholder_icon()
@@ -1515,11 +1521,8 @@ class ImageBrowser(QMainWindow):
         
         print(f"Added {self.model.rowCount()} items to model")
         
-        # Set initial grid and icon sizes (fixed size, doesn't change with zoom)
-        padding = 5
-        grid_size = self.icon_size + padding
-        self.view.setGridSize(QSize(grid_size, grid_size))
-        self.view.setIconSize(QSize(self.icon_size, self.icon_size))
+        # Restore icon and grid sizes (they can get reset when model is cleared)
+        self.restore_view_sizes()
         
         # Load first batch immediately
         if self.image_files:
@@ -1798,6 +1801,19 @@ class ImageBrowser(QMainWindow):
         
         # Clear and rebuild the model with new order
         self.rebuild_model()
+        
+        # Force view size restoration and update
+        QApplication.processEvents()  # Process pending events
+        self.restore_view_sizes()
+        self.view.update()  # Force visual update
+    
+    def restore_view_sizes(self):
+        """Restore icon and grid sizes to ensure consistent selection borders"""
+        padding = 5
+        self.view.setIconSize(QSize(self.icon_size, self.icon_size))
+        self.view.setGridSize(QSize(self.icon_size + padding, self.icon_size + padding))
+        # Force layout recalculation
+        self.view.scheduleDelayedItemsLayout()
     
     def rebuild_model(self):
         """Rebuild the model with current image order, preserving loaded icons"""
@@ -1842,6 +1858,9 @@ class ImageBrowser(QMainWindow):
             if filename in existing_icons:
                 new_loaded_images.add(i)
         self.loaded_images = new_loaded_images
+        
+        # Restore icon and grid sizes (they can get reset when model is cleared)
+        self.restore_view_sizes()
         
         # Load any visible images that aren't already loaded
         self.load_visible_images()
@@ -1929,6 +1948,9 @@ class ImageBrowser(QMainWindow):
             item.setToolTip(tooltip)
             
             self.model.appendRow(item)
+        
+        # Restore icon and grid sizes (they can get reset when model is cleared)
+        self.restore_view_sizes()
         
         print(f"Reloaded: Found {len(self.image_files)} visible images")
         
@@ -2287,6 +2309,9 @@ class ImageBrowser(QMainWindow):
             item.setToolTip(tooltip)
             
             self.model.appendRow(item)
+        
+        # Restore icon and grid sizes (they can get reset when model is cleared)
+        self.restore_view_sizes()
         
         # Update model with category information
         self.update_model_with_categories()
